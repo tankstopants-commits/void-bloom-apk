@@ -1,0 +1,362 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <title>VOID BLOOM</title>
+  <style>
+    body { margin: 0; overflow: hidden; background: #000; color: #fff; font-family: sans-serif; touch-action: none; }
+    canvas { display: block; width: 100vw; height: 100vh; image-rendering: pixelated; }
+    #menu { position: fixed; inset: 0; background: rgba(0,0,0,0.9); display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 50; }
+    button { padding: 15px 30px; font-size: 18px; background: #8b0012; color: white; border: 2px solid #fff; cursor: pointer; text-transform: uppercase; letter-spacing: 2px; }
+    #hud { position: fixed; top: 10px; left: 10px; font-family: monospace; font-size: 14px; color: #ccc; z-index: 20; display: none; }
+    #controls { position: fixed; bottom: 20px; right: 20px; display: none; gap: 10px; z-index: 30; }
+    .ctrl-btn { width: 60px; height: 60px; border-radius: 50%; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.3); color: white; font-size: 24px; display: flex; align-items: center; justify-content: center; user-select: none; -webkit-user-select: none; }
+    #stick-area { position: fixed; bottom: 20px; left: 20px; width: 120px; height: 120px; border-radius: 50%; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); display: none; z-index: 25; }
+    #knob { position: absolute; top: 50%; left: 50%; width: 40px; height: 40px; margin: -20px 0 0 -20px; border-radius: 50%; background: rgba(255,255,255,0.3); }
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  
+  <div id="menu">
+    <h1 style="color:#8b0012; margin-bottom:20px; text-shadow: 0 0 10px red;">VOID BLOOM</h1>
+    <button id="startBtn">ENTER VOID</button>
+  </div>
+  
+  <div id="hud">FRAGMENTS: <span id="fragCount">0/6</span></div>
+  
+  <div id="controls">
+    <div class="ctrl-btn" id="btnFlash">🔦</div>
+    <div class="ctrl-btn" id="btnRun">🏃</div>
+  </div>
+  
+  <div id="stick-area"><div id="knob"></div></div>
+
+<script>
+(function(){
+  'use strict';
+  
+  const MAP_SIZE = 33;
+  let canvas, ctx, W, H;
+  let map = [];
+  let player = { x: 1.5, y: 1.5, dirX: -1, dirY: 0, planeX: 0, planeZ: 0.72 };
+  let entity = { x: MAP_SIZE-2.5, y: MAP_SIZE-2.5 };
+  let gameState = 'MENU';
+  let lastTime = 0;
+  let keys = {};
+  let joystick = { active: false, dx: 0, dy: 0 };
+  let lookTouch = null;
+  let wallTex, bearTex;
+
+  function init() {
+    canvas = document.getElementById('game');
+    ctx = canvas.getContext('2d', { alpha: false });
+    
+    resize();
+    window.addEventListener('resize', resize);
+    
+    generateMap();
+    createTextures();
+    
+    document.getElementById('startBtn').addEventListener('click', startGame);
+    setupInputs();
+    
+    requestAnimationFrame(loop);
+  }
+
+  function resize() {
+    const scale = 0.5; 
+    W = Math.floor(window.innerWidth * scale);
+    H = Math.floor(window.innerHeight * scale);
+    canvas.width = W;
+    canvas.height = H;
+    canvas.style.width = '100%';
+    canvas.style.height = '100%';
+  }
+
+  function generateMap() {
+    for(let y=0; y<MAP_SIZE; y++) {
+      let row = [];
+      for(let x=0; x<MAP_SIZE; x++) {
+        if(x===0 || y===0 || x===MAP_SIZE-1 || y===MAP_SIZE-1) row.push(0);
+        else if(Math.random() > 0.85) row.push(0);
+        else row.push(1);
+      }
+      map.push(row);
+    }
+    map[1][1] = 1; map[1][2] = 1; map[2][1] = 1;
+    map[MAP_SIZE-2][MAP_SIZE-2] = 1;
+  }
+
+  function createTextures() {
+    wallTex = document.createElement('canvas');
+    wallTex.width = 64; wallTex.height = 64;
+    let wCtx = wallTex.getContext('2d');
+    wCtx.fillStyle = '#4a3c3c'; wCtx.fillRect(0,0,64,64);
+    wCtx.strokeStyle = '#2a1c1c'; wCtx.lineWidth = 2;
+    for(let i=0; i<64; i+=16) { wCtx.beginPath(); wCtx.moveTo(i,0); wCtx.lineTo(i,64); wCtx.stroke(); }
+    for(let i=0; i<64; i+=16) { wCtx.beginPath(); wCtx.moveTo(0,i); wCtx.lineTo(64,i); wCtx.stroke(); }
+    
+    bearTex = document.createElement('canvas');
+    bearTex.width = 64; bearTex.height = 128;
+    let bCtx = bearTex.getContext('2d');
+    bCtx.fillStyle = '#5a3a2a'; 
+    bCtx.fillRect(10, 40, 44, 60);
+    bCtx.beginPath(); bCtx.arc(32, 30, 20, 0, Math.PI*2); bCtx.fill();
+    bCtx.fillStyle = '#ff0000'; bCtx.fillRect(25, 25, 4, 4); bCtx.fillRect(35, 25, 4, 4);
+  }
+
+  function startGame() {
+    gameState = 'PLAYING';
+    document.getElementById('menu').style.display = 'none';
+    document.getElementById('hud').style.display = 'block';
+    document.getElementById('controls').style.display = 'flex';
+    document.getElementById('stick-area').style.display = 'block';
+    lastTime = performance.now();
+  }
+
+  function loop(now) {
+    requestAnimationFrame(loop);
+    if(gameState !== 'PLAYING') return;
+    
+    let dt = (now - lastTime) / 1000;
+    lastTime = now;
+    if(dt > 0.1) dt = 0.1;
+    
+    update(dt);
+    render();
+  }
+
+  function update(dt) {
+    let moveX = 0, moveY = 0;
+    if(keys['KeyW'] || keys['ArrowUp']) moveY -= 1;
+    if(keys['KeyS'] || keys['ArrowDown']) moveY += 1;
+    if(keys['KeyA'] || keys['ArrowLeft']) moveX -= 1;
+    if(keys['KeyD'] || keys['ArrowRight']) moveX += 1;
+    
+    if(moveX !== 0 && moveY !== 0) {
+      let len = Math.sqrt(moveX*moveX + moveY*moveY);
+      moveX /= len; moveY /= len;
+    }
+    
+    if(joystick.active) {
+      moveX += joystick.dx;
+      moveY += joystick.dy;
+    }
+    
+    let speed = 3.0 * dt;
+    let newX = player.x + (player.dirX * -moveY + (-player.planeX) * moveX) * speed;
+    let newY = player.y + (player.dirY * -moveY + (-player.planeZ) * moveX) * speed;
+    
+    if(map[Math.floor(newY)][Math.floor(newX)] === 1) {
+      player.x = newX;
+      player.y = newY;
+    }
+    
+    let distToPlayer = Math.hypot(player.x - entity.x, player.y - entity.y);
+    if(distToPlayer < 15) {
+      let ex = (player.x - entity.x) / distToPlayer;
+      let ey = (player.y - entity.y) / distToPlayer;
+      let espeed = 1.5 * dt;
+      let nextEX = entity.x + ex * espeed;
+      let nextEY = entity.y + ey * espeed;
+      
+      if(map[Math.floor(nextEY)][Math.floor(nextEX)] === 1) {
+        entity.x = nextEX;
+        entity.y = nextEY;
+      }
+      
+      if(distToPlayer < 1.5) {
+        alert("CAUGHT BY THE BEAR!");
+        location.reload();
+      }
+    }
+  }
+  
+  function rotate(angle) {
+    let oldDirX = player.dirX;
+    player.dirX = player.dirX * Math.cos(angle) - player.dirY * Math.sin(angle);
+    player.dirY = oldDirX * Math.sin(angle) + player.dirY * Math.cos(angle);
+    let oldPlaneX = player.planeX;
+    player.planeX = player.planeX * Math.cos(angle) - player.planeZ * Math.sin(angle);
+    player.planeZ = oldPlaneX * Math.sin(angle) + player.planeZ * Math.cos(angle);
+  }
+
+  function render() {
+    ctx.fillStyle = '#050505';
+    ctx.fillRect(0, 0, W, H);
+    
+    let grd = ctx.createLinearGradient(0, 0, 0, H);
+    grd.addColorStop(0, "#000");
+    grd.addColorStop(0.5, "#111");
+    grd.addColorStop(1, "#000");
+    ctx.fillStyle = grd;
+    ctx.fillRect(0, 0, W, H);
+    
+    let zBuffer = new Float32Array(W);
+    
+    for(let x = 0; x < W; x++) {
+      let cameraX = 2 * x / W - 1;
+      let rayDirX = player.dirX + player.planeX * cameraX;
+      let rayDirY = player.dirY + player.planeZ * cameraX;
+      
+      let mapX = Math.floor(player.x);
+      let mapY = Math.floor(player.y);
+      
+      let sideDistX, sideDistY;
+      let deltaDistX = (rayDirX === 0) ? 1e30 : Math.abs(1 / rayDirX);
+      let deltaDistY = (rayDirY === 0) ? 1e30 : Math.abs(1 / rayDirY);
+      
+      let stepX, stepY;
+      let hit = 0;
+      let side = 0;
+      
+      if(rayDirX < 0) { stepX = -1; sideDistX = (player.x - mapX) * deltaDistX; }
+      else { stepX = 1; sideDistX = (mapX + 1.0 - player.x) * deltaDistX; }
+      
+      if(rayDirY < 0) { stepY = -1; sideDistY = (player.y - mapY) * deltaDistY; }
+      else { stepY = 1; sideDistY = (mapY + 1.0 - player.y) * deltaDistY; }
+      
+      while(hit === 0) {
+        if(sideDistX < sideDistY) { sideDistX += deltaDistX; mapX += stepX; side = 0; }
+        else { sideDistY += deltaDistY; mapY += stepY; side = 1; }
+        
+        if(mapX >= 0 && mapX < MAP_SIZE && mapY >= 0 && mapY < MAP_SIZE) {
+          if(map[mapY][mapX] === 0) hit = 1;
+        } else { hit = 1; }
+      }
+      
+      let perpWallDist = (side === 0) ? (sideDistX - deltaDistX) : (sideDistY - deltaDistY);
+      zBuffer[x] = perpWallDist;
+      
+      let lineHeight = Math.floor(H / perpWallDist);
+      let drawStart = -lineHeight / 2 + H / 2;
+      if(drawStart < 0) drawStart = 0;
+      let drawEnd = lineHeight / 2 + H / 2;
+      if(drawEnd >= H) drawEnd = H - 1;
+      
+      let wallX; 
+      if(side === 0) wallX = player.y + perpWallDist * rayDirY;
+      else wallX = player.x + perpWallDist * rayDirX;
+      wallX -= Math.floor(wallX);
+      
+      let texX = Math.floor(wallX * 64);
+      if(side === 0 && rayDirX > 0) texX = 64 - texX - 1;
+      if(side === 1 && rayDirY < 0) texX = 64 - texX - 1;
+      
+      ctx.drawImage(wallTex, texX, 0, 1, 64, x, drawStart, 1, drawEnd - drawStart);
+      
+      let darkness = Math.min(0.8, perpWallDist / 20);
+      if(side === 1) darkness += 0.1;
+      ctx.fillStyle = `rgba(0,0,0,${darkness})`;
+      ctx.fillRect(x, drawStart, 1, drawEnd - drawStart);
+    }
+    
+    let sprites = [
+      { x: entity.x, y: entity.y, tex: bearTex, w: 1.5, h: 3.0 }
+    ];
+    
+    sprites.sort((a,b) => {
+      let da = (a.x - player.x)**2 + (a.y - player.y)**2;
+      let db = (b.x - player.x)**2 + (b.y - player.y)**2;
+      return db - da;
+    });
+    
+    for(let s of sprites) {
+      let spriteX = s.x - player.x;
+      let spriteY = s.y - player.y;
+      
+      let invDet = 1.0 / (player.planeX * player.dirY - player.dirX * player.planeZ);
+      let transformX = invDet * (player.dirY * spriteX - player.dirX * spriteY);
+      let transformY = invDet * (-player.planeZ * spriteX + player.planeX * spriteY);
+      
+      if(transformY <= 0) continue;
+      
+      let spriteScreenX = Math.floor((W / 2) * (1 + transformX / transformY));
+      let spriteHeight = Math.abs(Math.floor(H / transformY)) * s.h;
+      let drawStartY = -spriteHeight / 2 + H / 2;
+      if(drawStartY < 0) drawStartY = 0;
+      let drawEndY = spriteHeight / 2 + H / 2;
+      if(drawEndY >= H) drawEndY = H - 1;
+      
+      let spriteWidth = Math.abs(Math.floor(H / transformY)) * s.w;
+      let drawStartX = -spriteWidth / 2 + spriteScreenX;
+      let drawEndX = spriteWidth / 2 + spriteScreenX;
+      
+      if(drawStartX < 0) drawStartX = 0;
+      if(drawEndX >= W) drawEndX = W - 1;
+      
+      for(let stripe = Math.floor(drawStartX); stripe < drawEndX; stripe++) {
+        if(stripe < 0 || stripe >= W) continue;
+        if(transformY < zBuffer[stripe]) {
+           let texX = Math.floor((stripe - (-spriteWidth/2 + spriteScreenX)) * s.tex.width / spriteWidth);
+           ctx.drawImage(s.tex, texX, 0, 1, s.tex.height, stripe, drawStartY, 1, drawEndY - drawStartY);
+        }
+      }
+    }
+  }
+
+  function setupInputs() {
+    window.addEventListener('keydown', e => keys[e.code] = true);
+    window.addEventListener('keyup', e => keys[e.code] = false);
+    
+    let stickArea = document.getElementById('stick-area');
+    let knob = document.getElementById('knob');
+    
+    stickArea.addEventListener('touchstart', e => {
+      e.preventDefault();
+      joystick.active = true;
+    }, {passive: false});
+    
+    stickArea.addEventListener('touchmove', e => {
+      e.preventDefault();
+      if(!joystick.active) return;
+      let rect = stickArea.getBoundingClientRect();
+      let centerX = rect.left + rect.width/2;
+      let centerY = rect.top + rect.height/2;
+      let touch = e.touches[0];
+      let dx = touch.clientX - centerX;
+      let dy = touch.clientY - centerY;
+      let dist = Math.hypot(dx, dy);
+      let maxDist = rect.width/2 - 20;
+      if(dist > maxDist) {
+        dx = dx/dist * maxDist;
+        dy = dy/dist * maxDist;
+      }
+      knob.style.transform = `translate(${dx}px, ${dy}px)`;
+      joystick.dx = dx / maxDist;
+      joystick.dy = dy / maxDist;
+    }, {passive: false});
+    
+    stickArea.addEventListener('touchend', e => {
+      joystick.active = false;
+      joystick.dx = 0;
+      joystick.dy = 0;
+      knob.style.transform = `translate(0px, 0px)`;
+    });
+    
+    window.addEventListener('touchstart', e => {
+      if(e.target.closest('#stick-area') || e.target.closest('#controls')) return;
+      if(e.touches.length > 0) {
+         lookTouch = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+      }
+    }, {passive: false});
+    
+    window.addEventListener('touchmove', e => {
+      if(!lookTouch) return;
+      let touch = e.touches[0];
+      let dx = touch.clientX - lookTouch.x;
+      let angle = -dx * 0.005;
+      rotate(angle);
+      lookTouch.x = touch.clientX;
+    }, {passive: false});
+    
+    window.addEventListener('touchend', () => lookTouch = null);
+  }
+
+  init();
+})();
+</script>
+</body>
+</html>
