@@ -1,0 +1,49 @@
+name: Build Void Bloom APK
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch: # Кнопка ручного запуска
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22' # Обновленная версия для совместимости
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Prepare Capacitor Android project
+        run: |
+          npx cap add android || true
+          npx cap sync android
+
+      - name: Setup Java JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: gradle
+
+      - name: Grant execute permission for gradlew
+        working-directory: ./android
+        run: chmod +x gradlew
+
+      - name: Build Release APK
+        working-directory: ./android
+        run: ./gradlew assembleRelease --no-daemon
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: void-bloom-final-apk
+          path: android/app/build/outputs/apk/release/app-release.apk
+          retention-days: 7
