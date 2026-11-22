@@ -1,0 +1,10 @@
+{
+  "appId": "com.example.voidbloom",
+  "appName": "Void Bloom",
+  "webDir": "public",
+  "bundledWebRuntime": false,
+  "android": {
+    "allowMixedContent": true,
+    "captureInput": true
+  }
+}
